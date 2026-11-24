@@ -4,12 +4,6 @@ import { load as cheerioLoad } from "cheerio";
 import { JSDOM } from "jsdom";
 import { Cookie, CookieJar } from "tough-cookie";
 
-type Kid = {
-  id: number;
-  firstName: string;
-  lastName: string;
-  className: string;
-};
 type SchoolInfo = {
   key: string;
   value: string;
@@ -28,17 +22,7 @@ export type Schulaufgabe = {
   title: string;
   date: Date;
 };
-type Elternbrief = {
-  id: number;
-  readConfirmationId: number | undefined;
-  status: string;
-  title: string;
-  messageText: string;
-  classes: string;
-  date: string;
-  link: string;
-};
-type ElternPortalApiClientConfig = {
+type SchülerPortalApiClientConfig = {
   short: string;
   username: string;
   password: string;
@@ -52,7 +36,7 @@ type SchwarzesBrettBox = {
   content: string;
   link: string | undefined;
 };
-export type ElternportalFile = {
+export type SchülerportalFile = {
   name: string;
   buffer: Buffer;
 };
@@ -71,23 +55,22 @@ type VertretungsPlan = {
   substitutions: Vertretung[]
 };
 // =========
-/** gives you a new ElternPortalApiClient instance */
-async function getElternportalClient(
-  config: ElternPortalApiClientConfig
-): Promise<InstanceType<typeof ElternPortalApiClient>> {
-  const apiclient = new ElternPortalApiClient(config);
+/** gives you a new SchülerPortalApiClient instance */
+async function getSchülerportalClient(
+  config: SchülerPortalApiClientConfig
+): Promise<InstanceType<typeof SchülerPortalApiClient>> {
+  const apiclient = new SchülerPortalApiClient(config);
   await apiclient.init();
   return apiclient;
 }
-class ElternPortalApiClient {
+class SchülerPortalApiClient {
   jar: CookieJar;
   client: AxiosInstance;
   short: string = "";
   username: string = "";
   password: string = "";
-  kidId: number = 0;
   csrf: string = "";
-  constructor(config: ElternPortalApiClientConfig) {
+  constructor(config: SchülerPortalApiClientConfig) {
     this.short = config.short;
     this.username = config.username;
     this.password = config.password;
@@ -100,26 +83,20 @@ class ElternPortalApiClient {
       method: "GET",
       url: `https://api.schueler.schule-infoportal.de/${this.short}/api/school`,
     });
-    const $ = cheerioLoad(data);
     const cookies = await this.jar.getCookies("https://api.schueler.schule-infoportal.de/${this.short}/api/school");
-    console.log("Cookies:", cookies.map(cookie => cookie.toString()));
-    const target = cookies.find(c => c.key === 'XSRF-TOKEN')?.cookieString();
-    if(target) this.csrf = target;
-    console.log(this.csrf);
-    await this.login(cookies);
+    const target = cookies.find(c => c.key === 'XSRF-TOKEN');
+    if(target) this.csrf = target.value;
+    await this.login();
   }
 
-  async login(cookies : Cookie[]) {
+  async login() {
     const json = JSON.stringify({ email: this.username, password: this.password });
-    const cookieHeader = this.csrf +"; " + cookies.find(c => c.key === 'schuelerportal_session')?.cookieString();
-    console.log(cookieHeader);
     await this.client.request({
       method: "POST",
       url: `https://api.schueler.schule-infoportal.de/${this.short}/login`,
       headers: {
         "Content-Type": "application/json",
-        "Cookie": cookieHeader,
-        "X-XSRF-TOKEN": decodeURIComponent(this.csrf.replace("XSRF-TOKEN=","")),
+        "X-XSRF-TOKEN": decodeURIComponent(this.csrf),
       },
       data: json,
     });
@@ -195,8 +172,8 @@ class ElternPortalApiClient {
   /** get school infos as key value json array */
   async getSchoolInfos(): Promise<SchoolInfo[]> {
     const { data } = await this.client.get(
-      `https://${this.short}.eltern-portal.org/service/schulinformationen`
-    );
+      `https://api.schueler.schule-infoportal.de/${this.short}/api/school`
+    );/* Here continue
     const $ = cheerioLoad(data);
     $("table").remove();
     $(".hidden-lg").remove();
@@ -210,7 +187,7 @@ class ElternPortalApiClient {
           value: $(ele).find(".col-md-6").html() as string,
         };
       });
-    return schoolInfos;
+    return schoolInfos;*/
   }
 
   /** get termine of entire school */
@@ -384,102 +361,8 @@ class ElternPortalApiClient {
     });
     return vertretungsplan;
   }  
-  /** get lost and found items */
-  async getFundsachen(): Promise<string[]> {
-    const { data } = await this.client.get(
-      `https://${this.short}.eltern-portal.org/suche/fundsachen`
-    );
-    const $ = cheerioLoad(data);
-    $("table").remove();
-    $(".hidden-lg").remove();
-    let fundsachenhtml = ($("#asam_content").html() as string).replaceAll(
-      `\n`,
-      "<br>"
-    );
-    const fundsachen = cheerioLoad(fundsachenhtml)(".row")
-      .get()
-      .map((ele: any) => {
-        return $(ele).find(".caption").text();
-      })
-      .filter((f) => f.trim());
-    return fundsachen;
-  }
-  /** get parents letters */
-  async getElternbriefe(): Promise<Elternbrief[]> {
-    const { data } = await this.client.get(
-      `https://${this.short}.eltern-portal.org/aktuelles/elternbriefe`
-    );
-    const $ = cheerioLoad(data);
-    $(".hidden-lg").remove();
-    let tmp = $("tr")
-      .get()
-      .map((ele) => {
-        if (($(ele).find("td:first").html() as string).includes("<h4>")) {
-          const readConfirmationStringId =
-            $(ele)
-              .find("a")
-              .attr("onclick")
-              ?.match(/eb_bestaetigung\((\d+)\)/)![1] ?? undefined;
-          const readConfirmationId = readConfirmationStringId
-            ? parseInt(readConfirmationStringId)
-            : undefined;
-          const title = $(ele).find("td:first a h4").text();
-          $(ele).remove("h4");
-          const messageText = $(ele)
-            .find("td:first")
-            .clone()
-            .children()
-            .remove()
-            .end()
-            .text()
-            .trim();
-          const classes = $(ele)
-            .find("span[style='font-size: 8pt;']")
-            .text()
-            .replace("Klasse/n: ", "");
-          const link = $(ele).find("td:first a").attr("href");
-          const date = $(ele)
-            .find("td:first a")
-            .text()
-            .replace(`${title} `, "");
-          $(ele).remove("a");
-          return {
-            readConfirmationId,
-            title,
-            messageText,
-            classes,
-            date,
-            link,
-          };
-        }
-        const statusOriginal = $(ele).find("td:last").html() as string;
-        let status = "read";
-        if (statusOriginal.includes("noch nicht")) {
-          status = "unread";
-        }
-        return {
-          id: $(ele).find("td:first").html(),
-          status,
-        };
-      });
-    let briefe: Elternbrief[] = [];
-    for (let index = 0; index < tmp.length; index += 2) {
-      briefe.push({
-        id: parseInt((tmp[index].id as string).replace("#", "")),
-        readConfirmationId: tmp[index + 1].readConfirmationId,
-        status: tmp[index].status ?? "unread",
-        title: tmp[index + 1].title ?? "",
-        messageText: tmp[index + 1].messageText ?? "",
-        classes: tmp[index + 1].classes ?? "",
-        date: tmp[index + 1].date ?? "",
-        link: tmp[index + 1].link ?? "",
-      });
-    }
 
-    return briefe;
-  }
-
-  async getSchwarzesBrettFile(id: number): Promise<ElternportalFile> {
+  async getSchwarzesBrettFile(id: number): Promise<SchülerportalFile> {
     const schwarzesBrett = await this.getSchwarzesBrett();
     const entry = schwarzesBrett.find((entry) => entry.id === id);
 
@@ -494,38 +377,6 @@ class ElternPortalApiClient {
       buffer,
     };
     return file;
-  }
-
-  async getElternbrief(
-    id: number,
-    validateElternbriefReceipt: boolean = true
-  ): Promise<ElternportalFile> {
-    const elternbriefe = await this.getElternbriefe();
-    const brief = elternbriefe.find((brief) => brief.id === id);
-
-    if (!brief || !brief.link) {
-      throw new Error("Elternbrief not found");
-    }
-
-    const buffer = await this.getFileBuffer(brief?.link ?? "");
-
-    if (validateElternbriefReceipt) {
-      await this.validateElternbriefReceipt(brief);
-    }
-
-    const file = {
-      name: brief.title,
-      buffer,
-    };
-    return file;
-  }
-
-  private async validateElternbriefReceipt(elternbrief: Elternbrief) {
-    if (elternbrief.readConfirmationId) {
-      await this.client.get(
-        `https://${this.short}.eltern-portal.org/api/elternbrief_bestaetigen.php?eb=${elternbrief.readConfirmationId}`
-      );
-    }
   }
 
   private async getFileBuffer(link: string): Promise<Buffer> {
@@ -561,4 +412,4 @@ class ElternPortalApiClient {
   }
 }
 // =========
-export { ElternPortalApiClient, getElternportalClient };
+export { SchülerPortalApiClient, getSchülerportalClient };
