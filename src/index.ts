@@ -76,7 +76,9 @@ class SchülerPortalApiClient {
     this.password = config.password;
     //
     this.jar = new CookieJar();
-    this.client = wrapper(axios.create({ jar: this.jar }));
+    // axios-cookiejar-support erweitert Axios zur Laufzeit um die Option `jar`.
+    // Diese Erweiterung ist in den Axios-Typen selbst nicht enthalten.
+    this.client = wrapper(axios.create({ jar: this.jar } as any) as any) as AxiosInstance;
   }
   async init() {
     const { data } = await this.client.request({
@@ -169,13 +171,20 @@ class SchülerPortalApiClient {
 
     return posts;
   }
+
   /** get school infos as key value json array */
   async getSchoolInfos(): Promise<SchoolInfo[]> {
     const { data } = await this.client.get(
       `https://api.schueler.schule-infoportal.de/${this.short}/api/school`
     );
-    let schoolInfos: SchoolInfo[] = [];
-    console.log(data.data);
+    const unwantedKeys = ["test_period", "\x00*\x00ignoreMissing","\x00*\x00exceptKeys","\x00*\x00onlyKeys","addres2"];
+    const schoolInfos: SchoolInfo[] = Object.entries(data)
+      .filter(([key]) => !unwantedKeys.includes(key))
+      .map(([key, value]) => ({
+        key,
+        value: value !== null && value !== undefined ? String(value) : ""
+      }));
+
     return schoolInfos;
   }
 
