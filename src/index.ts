@@ -1,4 +1,4 @@
-import axios, { AxiosInstance } from "axios";
+import axios, { type AxiosInstance } from "axios";
 import { wrapper } from "axios-cookiejar-support";
 import { load as cheerioLoad } from "cheerio";
 import { JSDOM } from "jsdom";
@@ -173,21 +173,10 @@ class SchülerPortalApiClient {
   async getSchoolInfos(): Promise<SchoolInfo[]> {
     const { data } = await this.client.get(
       `https://api.schueler.schule-infoportal.de/${this.short}/api/school`
-    );/* Here continue
-    const $ = cheerioLoad(data);
-    $("table").remove();
-    $(".hidden-lg").remove();
-    let infos =
-      ($("#asam_content").html() as string) || "".replaceAll(`\n`, "<br>");
-    const schoolInfos = cheerioLoad(infos)(".row")
-      .get()
-      .map((ele) => {
-        return {
-          key: $(ele).find(".col-md-4").text(),
-          value: $(ele).find(".col-md-6").html() as string,
-        };
-      });
-    return schoolInfos;*/
+    );
+    let schoolInfos: SchoolInfo[] = [];
+    console.log(data.data);
+    return schoolInfos;
   }
 
   /** get termine of entire school */
