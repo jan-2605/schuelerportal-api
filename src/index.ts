@@ -54,6 +54,21 @@ type VertretungsPlan = {
   lastUpdate: Date|undefined,
   substitutions: Vertretung[]
 };
+type Stunde = {
+  period: number;
+  subject: string;
+  teacher: string;
+  room: string;
+};
+type Stundenplan = {
+  day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday";
+  lessons: Stunde[];
+};
+type Zeittafel = {
+  period: number;
+  from: string;
+  to: string;
+}
 // =========
 /** gives you a new SchülerPortalApiClient instance */
 async function getSchülerportalClient(
@@ -70,22 +85,20 @@ class SchülerPortalApiClient {
   username: string = "";
   password: string = "";
   csrf: string = "";
+  
   constructor(config: SchülerPortalApiClientConfig) {
     this.short = config.short;
     this.username = config.username;
     this.password = config.password;
-    //
     this.jar = new CookieJar();
-    // axios-cookiejar-support erweitert Axios zur Laufzeit um die Option `jar`.
-    // Diese Erweiterung ist in den Axios-Typen selbst nicht enthalten.
-    this.client = wrapper(axios.create({ jar: this.jar } as any) as any) as AxiosInstance;
+    this.client = wrapper(axios.create({ jar: this.jar, withCredentials: true, } as any) as any) as AxiosInstance;
   }
   async init() {
     const { data } = await this.client.request({
       method: "GET",
       url: `https://api.schueler.schule-infoportal.de/${this.short}/api/school`,
     });
-    const cookies = await this.jar.getCookies("https://api.schueler.schule-infoportal.de/${this.short}/api/school");
+    const cookies = await this.jar.getCookies(`https://api.schueler.schule-infoportal.de/${this.short}/api/school`);
     const target = cookies.find(c => c.key === 'XSRF-TOKEN');
     if(target) this.csrf = target.value;
     await this.login();
@@ -104,74 +117,6 @@ class SchülerPortalApiClient {
     });
   }
 
-  /** get array of blackboard items */
-  async getSchwarzesBrett(
-    includeArchived = false
-  ): Promise<SchwarzesBrettBox[]> {
-    const { data } = await this.client.get(
-      `https://${this.short}.eltern-portal.org/aktuelles/schwarzes_brett`
-    );
-    const $ = cheerioLoad(data);
-    const posts: SchwarzesBrettBox[] = [];
-
-    $(".container .grid-item").each((_index: number, element) => {
-      const dateStart = $(element)
-        .find(".text-right")
-        .text()
-        .trim()
-        .replace("eingestellt am ", "")
-        .replace(" 00:00:00", "")
-        .replace(",,", '"');
-      const title = $(element).find("h4").text().trim().replace(",,", '"');
-      const content = this.htmlToPlainText(
-        $(element)
-          .find("p:not(.text-right)")
-          .map((_i, el) => $(el).html())
-          .get()
-          .join("<br>")
-      );
-      const link = $(element).find("a").attr("href");
-      const id = parseInt(link?.split("repo=")[1].split("&")[0] ?? "0");
-
-      posts.push({
-        id: id == 0 ? this.getIdFromTitle(title) : id,
-        dateStart,
-        dateEnd: null,
-        title,
-        content,
-        archived: false,
-        link,
-      });
-    });
-
-    if (includeArchived) {
-      $(".arch .well").each((_index: number, element) => {
-        const link = $(element).find("a").attr("href");
-        const id = parseInt(link?.split("?")[1].split("repo")[0] ?? "0");
-        const title = $(element).find("h4").text().trim().replace(",,", '"');
-        const content = $(element)
-          .find(".col-sm-9 p")
-          .text()
-          .replace(",,", '"');
-        const dates = $(element).find(".col-md-2 p").text().trim().split(" - ");
-        const dateStart = dates[0];
-        const dateEnd = dates[1];
-
-        posts.push({
-          id,
-          dateStart,
-          dateEnd,
-          title,
-          content,
-          archived: true,
-          link,
-        });
-      });
-    }
-
-    return posts;
-  }
-
   /** get school infos as key value json array */
   async getSchoolInfos(): Promise<SchoolInfo[]> {
     const { data } = await this.client.get(
@@ -186,6 +131,22 @@ class SchülerPortalApiClient {
       }));
 
     return schoolInfos;
+  }
+
+  async getStundenplan(): Promise<Stundenplan[]> {
+    const url = `https://api.schueler.schule-infoportal.de/${this.short}/api/stundenplan`;
+    console.log(await this.jar.getCookieString(url));
+    
+    const {data} = await this.client.request({
+      method: "GET",
+      url: `https://api.schueler.schule-infoportal.de/${this.short}/api/stundenplan`,
+      headers: {
+        Accept: "application/json",
+      }
+
+    });
+    return data;
+
   }
 
   /** get termine of entire school */
@@ -265,37 +226,7 @@ class SchülerPortalApiClient {
 
     return [param__from, param__to, utc_offset];
   }
-  /** get timetable of currently selected kid */
-  async getStundenplan(): Promise<any> {
-    const { data } = await this.client.get(
-      `https://${this.short}.eltern-portal.org/service/stundenplan`
-    );
-    const $ = cheerioLoad(data);
-    const tmp = $("#asam_content > div > table > tbody tr td");
-    // @ts-ignore
-    let rows = [];
-    let std = 0;
-    tmp.each((_index: number, element) => {
-      // replace <br> with \n to catch all versions 
-      $(element).find("br").replaceWith("\n");
-      const values = $(element).text().split("\n");
 
-      if ($(element).attr("width") == "15%") {
-        const value = parseInt(values[0]);
-        std = value
-        const detail = (values[1] || "").replaceAll(".", ":");
-          rows.push({ type: "info", value, detail, std });
-        } else {
-        const value = (values[0] || "");
-        const detail = (values[1] || "");
-          rows.push({ type: "class", value, detail, std });
-        }
-    });
-    // @ts-ignore
-    rows = rows.filter((r) => r.std !== null);
-    // @ts-ignore
-    return rows;
-  }
   /** get substitutions */
   async getVertretungsplan(): Promise<VertretungsPlan> {
     const { data } = await this.client.request({
@@ -360,31 +291,6 @@ class SchülerPortalApiClient {
     return vertretungsplan;
   }  
 
-  async getSchwarzesBrettFile(id: number): Promise<SchülerportalFile> {
-    const schwarzesBrett = await this.getSchwarzesBrett();
-    const entry = schwarzesBrett.find((entry) => entry.id === id);
-
-    if (!entry || !entry.link) {
-      throw new Error("File from Schwarzesbrett not found");
-    }
-
-    const buffer = await this.getFileBuffer(entry?.link ?? "");
-
-    const file = {
-      name: entry.title,
-      buffer,
-    };
-    return file;
-  }
-
-  private async getFileBuffer(link: string): Promise<Buffer> {
-    const downloadUrl = `https://${this.short}.eltern-portal.org/${link}`;
-    const response = await this.client.get(downloadUrl, {
-      responseType: "arraybuffer",
-    });
-    const buffer = Buffer.from(response.data, "binary");
-    return buffer;
-  }
 
   private getIdFromTitle(title: string): number {
     let hash = 5381;
